@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: stock
+      POSTGRES_PASSWORD: your-password
+      POSTGRES_DB: stock_advisor
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # 本地股票机器人
+  local-bot:
+    build: ./local-bot
+    environment:
+      - PORT=3001
+      - BOT_API_TOKEN=${BOT_API_TOKEN}
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./local-bot:/app
+      - /app/node_modules
+    command: npm run dev
+
+  # 前台服务 (部署在阿里云，这里仅用于本地测试)
+  frontend:
+    build: ./frontend
+    environment:
+      - DATABASE_URL=postgresql://stock:your-password@postgres:5432/stock_advisor
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - NEXTAUTH_URL=http://localhost:3000
+      - WECHAT_APPID=${WECHAT_APPID}
+      - WECHAT_SECRET=${WECHAT_SECRET}
+      - WECHAT_MCHID=${WECHAT_MCHID}
+      - WECHAT_API_KEY=${WECHAT_API_KEY}
+      - BOT_API_TOKEN=${BOT_API_TOKEN}
+      - LOCAL_BOT_URL=http://local-bot:3001
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - local-bot
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+
+volumes:
+  postgres_data:

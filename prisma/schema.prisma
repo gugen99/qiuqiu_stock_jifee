@@ -1,0 +1,417 @@
+// Prisma Schema for Stock Advisor Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== NextAuth Models ====================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ==================== User Models ====================
+
+enum UserRole {
+  USER      // 普通用户
+  ADVISOR   // 咨询师
+  ADMIN     // 管理员
+}
+
+enum AdvisorStatus {
+  PENDING   // 待审核
+  APPROVED  // 已通过
+  REJECTED  // 已拒绝
+  SUSPENDED // 已暂停
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  password      String?   // 加密后的密码
+  image         String?
+  phone         String?
+  role          UserRole  @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  accounts       Account[]
+  sessions       Session[]
+  advisor        Advisor?
+  consultationsAsUser    Consultation[]  @relation("UserConsultations")
+  reviews        Review[]
+  payments       Payment[]
+  subscriptions  Subscription[]
+  messages       Message[]
+  notifications  Notification[]
+
+  @@index([email])
+  @@index([role])
+}
+
+// ==================== Advisor Models ====================
+
+model Advisor {
+  id                   String         @id @default(cuid())
+  userId               String         @unique
+  title                String?        // 职称，如"高级分析师"
+  bio                  String?        @db.Text // 个人简介
+  experience           Int            @default(0) // 从业年限
+  company              String?        // 所在公司
+  licenseNumber        String?        // 执业证书编号
+  licenseImage         String?        // 执业证书图片
+  status               AdvisorStatus  @default(PENDING)
+  verifiedAt           DateTime?      // 审核通过时间
+  rating               Float          @default(0) // 平均评分
+  totalReviews         Int            @default(0) // 总评价数
+  totalConsultations   Int            @default(0) // 总咨询数
+  responseTime         Int            @default(0) // 平均响应时间(分钟)
+  isOnline             Boolean        @default(false)
+  lastOnlineAt         DateTime?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  // Pricing
+  pricePerSession      Float?         // 单次咨询价格
+  pricePerHour         Float?         // 按小时价格
+  currency             String         @default("CNY")
+
+  // Relations
+  user                 User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specialties          AdvisorSpecialty[]
+  services             Service[]
+  consultations        Consultation[] @relation("AdvisorConsultations")
+  performances         AdvisorPerformance[]
+  availability         AdvisorAvailability[]
+
+  @@index([status])
+  @@index([rating])
+}
+
+model AdvisorSpecialty {
+  id          String   @id @default(cuid())
+  advisorId   String
+  name        String   // 专业领域名称
+  level       String?  // 级别，如"专家"、"资深"
+  description String?  @db.Text
+
+  advisor Advisor @relation(fields: [advisorId], references: [id], onDelete: Cascade)
+
+  @@unique([advisorId, name])
+  @@index([advisorId])
+}
+
+model AdvisorAvailability {
+  id          String   @id @default(cuid())
+  advisorId   String
+  dayOfWeek   Int      // 0-6, 0=周日
+  startTime   String   // 开始时间，如 "09:00"
+  endTime     String   // 结束时间，如 "18:00"
+  isAvailable Boolean  @default(true)
+
+  advisor Advisor @relation(fields: [advisorId], references: [id], onDelete: Cascade)
+
+  @@unique([advisorId, dayOfWeek])
+  @@index([advisorId])
+}
+
+model AdvisorPerformance {
+  id             String   @id @default(cuid())
+  advisorId      String
+  date           DateTime @db.Date
+  totalSessions  Int      @default(0)
+  totalDuration  Int      @default(0) // 总时长(分钟)
+  totalEarnings  Float    @default(0)
+  avgRating      Float?
+  newClients     Int      @default(0)
+
+  advisor Advisor @relation(fields: [advisorId], references: [id], onDelete: Cascade)
+
+  @@unique([advisorId, date])
+  @@index([advisorId, date])
+}
+
+// ==================== Service Models ====================
+
+enum ServiceType {
+  SINGLE_SESSION  // 单次咨询
+  HOURLY          // 按小时
+  SUBSCRIPTION    // 订阅套餐
+}
+
+enum SubscriptionPeriod {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+model Service {
+  id              String            @id @default(cuid())
+  advisorId       String
+  name            String
+  description     String?           @db.Text
+  type            ServiceType
+  price           Float
+  currency        String            @default("CNY")
+  duration        Int?              // 时长(分钟)，单次咨询用
+  period          SubscriptionPeriod? // 订阅周期
+  sessionsLimit   Int?              // 套餐内咨询次数限制
+  features        String?           @db.Text // JSON格式存储特性列表
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  advisor        Advisor            @relation(fields: [advisorId], references: [id], onDelete: Cascade)
+  subscriptions  Subscription[]
+  orders         Order[]
+
+  @@index([advisorId])
+  @@index([type])
+}
+
+// ==================== Consultation Models ====================
+
+enum ConsultationStatus {
+  PENDING      // 待确认
+  CONFIRMED    // 已确认
+  IN_PROGRESS  // 进行中
+  COMPLETED    // 已完成
+  CANCELLED    // 已取消
+  REFUNDED     // 已退款
+}
+
+enum ConsultationType {
+  SINGLE   // 单次咨询
+  HOURLY   // 按小时
+  PACKAGE  // 套餐内咨询
+}
+
+model Consultation {
+  id             String             @id @default(cuid())
+  userId         String
+  advisorId      String
+  serviceId      String?
+  type           ConsultationType
+  status         ConsultationStatus @default(PENDING)
+  scheduledAt    DateTime?          // 预约时间
+  startedAt      DateTime?          // 实际开始时间
+  endedAt        DateTime?          // 实际结束时间
+  duration       Int?               // 实际时长(分钟)
+  price          Float              // 本次咨询价格
+  currency       String             @default("CNY")
+  notes          String?            @db.Text // 用户备注
+  cancelReason   String?            @db.Text // 取消原因
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  user           User               @relation("UserConsultations", fields: [userId], references: [id], onDelete: Cascade)
+  advisor        Advisor            @relation("AdvisorConsultations", fields: [advisorId], references: [id], onDelete: Cascade)
+  service        Service?           @relation(fields: [serviceId], references: [id])
+  messages       Message[]
+  review         Review?
+  order          Order?             @relation(fields: [consultationId], references: [id])
+
+  @@index([userId])
+  @@index([advisorId])
+  @@index([status])
+  @@index([scheduledAt])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  consultationId String
+  senderId       String
+  content        String   @db.Text
+  type           String   @default("text") // text, image, file
+  isRead         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  consultation Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([consultationId])
+  @@index([senderId])
+  @@index([createdAt])
+}
+
+// ==================== Review Models ====================
+
+model Review {
+  id             String   @id @default(cuid())
+  userId         String
+  advisorId      String
+  consultationId String   @unique
+  rating         Int      // 1-5
+  content        String?  @db.Text
+  isAnonymous    Boolean  @default(false)
+  isVisible      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  advisor       Advisor       @relation(fields: [advisorId], references: [id])
+  consultation  Consultation  @relation(fields: [consultationId], references: [id])
+
+  @@index([advisorId])
+  @@index([userId])
+  @@index([rating])
+}
+
+// ==================== Payment Models ====================
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  STRIPE
+  ALIPAY
+  WECHAT
+}
+
+model Order {
+  id              String        @id @default(cuid())
+  orderNo         String        @unique
+  userId          String
+  serviceId       String?
+  consultationId  String?       @unique
+  amount          Float
+  currency        String        @default("CNY")
+  status          PaymentStatus @default(PENDING)
+  paymentMethod   PaymentMethod?
+  stripePaymentIntentId String?
+  stripeSessionId String?
+  paidAt          DateTime?
+  refundedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  service       Service?       @relation(fields: [serviceId], references: [id])
+  consultation  Consultation?  @relation(fields: [consultationId], references: [id])
+  payments      Payment[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  orderId         String
+  userId          String
+  amount          Float
+  currency        String        @default("CNY")
+  status          PaymentStatus @default(PENDING)
+  paymentMethod   PaymentMethod
+  stripePaymentId String?
+  metadata        String?       @db.Text // JSON格式存储额外信息
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([status])
+}
+
+model Subscription {
+  id              String   @id @default(cuid())
+  userId          String
+  serviceId       String
+  stripeSubscriptionId String?
+  stripeCustomerId String?
+  status          String   // active, canceled, past_due, etc.
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean  @default(false)
+  sessionsUsed     Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([serviceId])
+  @@index([status])
+}
+
+// ==================== Notification Models ====================
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   // consultation, payment, review, system
+  title       String
+  content     String   @db.Text
+  data        String?  @db.Text // JSON格式存储额外数据
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+// ==================== Admin Models ====================
+
+model AdminSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String   @db.Text
+  description String?
+  updatedAt   DateTime @updatedAt
+}
